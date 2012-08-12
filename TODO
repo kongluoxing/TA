@@ -1,0 +1,36 @@
+【操作系统】
+1. uname
+2. hostname
+3. 序列号
+4. 厂商
+5. 虚拟机 or pc机
+6. cpu
+7. 内存
+8. pv
+9. vg
+10. lv
+11. netstat
+12. iostat
+13. vmstat
+14. ps elf
+15. df -h
+16. fdisk -l
+17. dmidecode
+18. kudzu
+19. chkconfig --list
+20. gcc
+21. java
+22. sysctl
+23. 防火墙，selinux状态
+24. CPU占用top 10
+25. 内存占用top 10
+crontab
+数据库
+1. version
+2. control file
+3. logfile
+4. parameter
+5. tablespace
+6. awr
+
+所有命令保存原始数据，以备核对
