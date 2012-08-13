@@ -94,8 +94,9 @@ class OsInfo(object):
         ipaddr = ssh.ssh_exec("/sbin/ifconfig eth0|grep 'inet addr:'|awk '{print $2}'")[1][0][5:].rstrip()
         arch = ssh.ssh_exec('uname -m')[1][0].rstrip()
         manufacturer = ssh.ssh_exec('/usr/sbin/dmidecode | grep Manufacturer | head -n 1')[1][1].rstrip()
+        sn = ssh.ssh_exec("dmidecode | grep -i 'serial number' | head -n 1 | awk {'print $3'}")[1][0].rstrip()
         self.basic_list = ['', '', ['主机名', 'IP 地址', '操作系统', 'CPU架构', '快照时间', '厂商', '序列号'],
-                      [hostname, ipaddr,self.os_type, arch, __time__, manufacturer]]
+                      [hostname, ipaddr,self.os_type, arch, __time__, manufacturer, sn]]
 
     def linux_func(self):
         self.basic_func()
@@ -129,7 +130,7 @@ class OsInfo(object):
         cpu_count = cpu_func('processor')
         cpu_list = ['cat /proc/cpuinfo', 'CPU信息',
                     ['制造商', 'BIT', '型号', 'CPU个数', '每CPU核心数', '频率'],
-                    [cpu_manuf, cpu_bit, cpu_model, int(cpu_count)+1, cpu_cores, cpu_frq]]
+                    [cpu_manuf, cpu_bit, cpu_model, (int(cpu_count)+1)/int(cpu_cores), cpu_cores, cpu_frq]]
         mpstat = ssh.ssh_exec('mpstat 2 5', x=2, y=2, info='总CPU使用率')
         mpstat[8].insert(0, 'Average')
 #        print cpu_list
