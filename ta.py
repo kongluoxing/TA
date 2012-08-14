@@ -16,7 +16,7 @@ __time__ = time.strftime('%Y-%m-%d %X', time.localtime())
 #__path__ = os.path.abspath(os.path.dirname(__file__))
 
 
-class Connect(object):
+class Connector(object):
     def __init__(self):
         '''从ta_config.ini载入配置'''
         self.TELNET = False
@@ -110,7 +110,7 @@ class Connect(object):
             if '#' in tmp_out[-1]:
                 del tmp_out[-1]
             for line in tmp_out:
-                stdout.append([line])
+                stdout.append(line.split())
             #conn.write(command + enter_key)
             #stdout = conn.read_very_eager()
         else:
@@ -131,16 +131,26 @@ class Connect(object):
         return out
     def exec_single(self, command):
         '''针对只有一行输出的命令'''
-        return self.remote_exec(command)[1][0].rstrip()
+#        if self.TELNET:
+        return self.remote_exec(command)[1][0].rstrip().lstrip()
+#        else:
+#            return self.remote_exec(command)[1].rstrip().lstrip()
     def parse_output(self, output, x = 0, y = 0):
         '''转换命令输出为2维list
 
         x表示要删除的行数，y表示要删除的列数(从第一行/列开始)'''
         list = []
-        for lines in output:
-            list.append(lines)
+        if self.TELNET:
+            map(lambda (line): list.append(line), output)
+        else:
+            map(lambda (line): list.append(line.split()), output)
+
+#        for lines in output:
+#            list.append(lines)
 #            if '#' in output[-1]:
 #                output = output[:-1]
+        #删除空元素
+        list = filter(None, list)
         #删除不需要元素
         if x > 0:
             for i in range(x):
@@ -157,8 +167,8 @@ class OsInfo(object):
         '''选择操作系统
 
         i_conn: Connect对象实例'''
-        s = self.i_conn.remote_exec('uname')[1][0].lstrip()
-        #self.os_type = s[1][0].rstrip()
+        s = self.i_conn.exec_single('uname')
+        self.os_type = s
         chooseOS = {'Linux':lambda:self.linux_func(),
                     'AIX':lambda:self.aix_func(),
                     'HP-UX':lambda:self.hp_func(),
@@ -166,39 +176,46 @@ class OsInfo(object):
         #chooseOS[self.os_type]()
         chooseOS[s]()
     def basic_func(self):
-        hostname = self.i_conn.remote_exec('hostname')[1][0].rstrip()
-        ipaddr = self.i_conn.remote_exec("/sbin/ifconfig -a|grep 'inet addr:'|awk '{print $2}'")[1][0][5:].rstrip()
+        hostname = self.i_conn.exec_single('hostname')
+        ipaddr = self.i_conn.exec_single("/sbin/ifconfig -a|grep 'inet addr:'|awk '{print $2}'")[5:]
         arch = self.i_conn.remote_exec('uname -m')[1][0].rstrip()
         manufacturer = self.i_conn.remote_exec('/usr/sbin/dmidecode | grep Manufacturer | head -n 1')[1][1].rstrip()
-        sn = self.i_conn.remote_exec("dmidecode | grep -i 'serial number' | head -n 1 | awk {'print $3'}")[1][0].rstrip()
+        sn = self.i_conn.exec_single("dmidecode | grep -i 'serial number' | head -n 1 | awk {'print $3'}")
         self.basic_list = ['', '', ['主机名', 'IP 地址', '操作系统', 'CPU架构', '快照时间', '厂商', '序列号'],
                       [hostname, ipaddr,self.os_type, arch, __time__, manufacturer, sn]]
 
     def linux_func(self):
+        i_conn = self.i_conn
+        connection.check_rpm('dmidecode')
+        connection.check_rpm('sysstat')
         self.basic_func()
         #系统版本信息
-        sys_ver = self.i_conn.remote_exec('cat /etc/redhat-release')
+        sys_ver = i_conn.remote_exec('cat /etc/redhat-release')
         p = re.compile('\d')
         sys_ver = p.findall(''.join(str(n) for n in sys_ver))
         sys_ver = '.'.join(str(n) for n in sys_ver)
 #        print sys_ver
-        kernel = self.i_conn.exec_single('uname -r')
-        gcc = self.i_conn.remote_exec('/usr/bin/gcc --version', info = 'GCC')[2][2]
-        version = ['', '', ['系统版本', '内核版本', 'GCC版本'],[sys_ver, kernel, gcc]]
+        kernel = i_conn.exec_single('uname -r')
+        gcc = i_conn.remote_exec('/usr/bin/gcc --version', info = 'GCC')[2][2]
+        version = ['', '', ['系统版本', '内核版本', 'GCC版本', 'Java版本'],[sys_ver, kernel, gcc, java_ver]]
         #java 版本号获取不到
 #        java = conn.remote_exec('/usr/java/default/bin/java -version', info = 'Java')
 #        print java
+        java_dir = i_conn.remote_exec('ls -d /usr/java*')
+        java_ver = ''
+        for n in java_dir[-1]:
+            java_ver += n + ', '
         #获取cpu信息
         def cpu_func(matches):
-            cpuinfo = self.i_conn.remote_exec("grep '" +  matches + "' /proc/cpuinfo | tail -n 1")[1]
+            cpuinfo = i_conn.remote_exec("grep '" +  matches + "' /proc/cpuinfo | tail -n 1")[1]
 #            print cpuinfo
             cpuinfo = cpuinfo[len(cpuinfo)-1:]
             return cpuinfo[0]
 #        print self.basic_list
 
         cpu_manuf = cpu_func('vendor_id')
-        cpu_bit = self.i_conn.exec_single('getconf LONG_BIT')
-        cpu_model_t = self.i_conn.remote_exec("grep 'model' /proc/cpuinfo | tail -n 1")[1]
+        cpu_bit = i_conn.exec_single('getconf LONG_BIT')
+        cpu_model_t = i_conn.remote_exec("grep 'model' /proc/cpuinfo | tail -n 1")[1]
         if cpu_model_t[7] == '@':
             cpu_model = cpu_model_t[6]
         else:
@@ -209,20 +226,20 @@ class OsInfo(object):
         cpu_list = ['cat /proc/cpuinfo', 'CPU信息',
                     ['制造商', 'BIT', '型号', 'CPU个数', '每CPU核心数', '频率'],
                     [cpu_manuf, cpu_bit, cpu_model, (int(cpu_count)+1)/int(cpu_cores), cpu_cores, cpu_frq]]
-        mpstat = self.i_conn.remote_exec('mpstat 2 5', x=2, y=2, info='总CPU使用率')
-        mpstat[8].insert(0, 'Average')
+        mpstat = i_conn.remote_exec('mpstat 2 5', x=2, y=2, info='总CPU使用率')
+        mpstat[7].insert(0, 'Average')
 #        print cpu_list
         #获取内存信息
-        meminfo = self.i_conn.remote_exec('cat /proc/meminfo')
+        meminfo = i_conn.remote_exec('cat /proc/meminfo')
         memlist = ['cat /proc/meminfo', '内存信息(单位KByte)',
                    ['总内存', '剩余内存', 'Buffers', 'Cached', '总swap', '剩余swap'],
                    [meminfo[1][1], meminfo[2][1], meminfo[3][1], meminfo[4][1], meminfo[12][1], meminfo[13][1]]]
 #        print memlist
-        pvlist = self.i_conn.remote_exec('pvs', info='物理卷')
-        vglist = self.i_conn.remote_exec('vgs', info='卷组')
-        lvlist = self.i_conn.remote_exec('lvs', info='逻辑卷')
+        pvlist = i_conn.remote_exec('pvs', info='物理卷')
+        vglist = i_conn.remote_exec('vgs', info='卷组')
+        lvlist = i_conn.remote_exec('lvs', info='逻辑卷')
         del lvlist[2][4:]
-        dflist = self.i_conn.remote_exec('df -h', info='文件系统信息')
+        dflist = i_conn.remote_exec('df -h', info='文件系统信息')
         del dflist[2][6]
         dflist[2][5]='Mounted on'
         #美化df输出
@@ -234,17 +251,18 @@ class OsInfo(object):
                 next.insert(0, line[0])
                 dflist.remove(line)
 
-        router = self.i_conn.remote_exec('netstat -rn', x=1, info='内核路由表')
-        net_pkg = self.i_conn.remote_exec('netstat -in', x=1, info='网卡工作状态')
-        ipnet = self.i_conn.remote_exec('ifconfig | grep -A 1 eth | grep inet', y=1, info='IP/掩码')
+        router = i_conn.remote_exec('netstat -rn', x=1, info='内核路由表')
+        net_pkg = i_conn.remote_exec('netstat -in', x=1, info='网卡工作状态')
+        ipnet = i_conn.remote_exec('ifconfig | grep -A 1 eth | grep inet', y=1, info='IP/掩码')
         ipnet.insert(2,['IP地址', '广播地址', '子网掩码'])
 
-        iostat = self.i_conn.remote_exec('iostat', x=5, info='I/O状态')
-        vmstat = self.i_conn.remote_exec('vmstat 2 5', 1, 0, 'vmstat输出')
-        top = self.i_conn.remote_exec('top -bn 1 | head -n 17', 6, 0, info = 'CPU TOP 10 进程')
-        mem_top = self.i_conn.remote_exec("top -bn 1 | sed '1,7 d' | sort -rn -k10 -k6 | head -n 10", info = 'MEM TOP 10进程')
+        iostat = i_conn.remote_exec('iostat', x=5, info='I/O状态')
+        vmstat = i_conn.remote_exec('vmstat 2 5', 1, 0, 'vmstat输出')
+        top = i_conn.remote_exec('top -bn 1 | head -n 17', 6, 0, info = 'CPU TOP 10 进程')
+        mem_top = i_conn.remote_exec("top -bn 1 | sed '1,7 d' | sort -rn -k10 -k6 | head -n 10",
+            info = 'MEM TOP 10进程')
         mem_top.insert(2, top[2])
-        sysctl = self.i_conn.remote_exec("sysctl -p | sed 's/=//g'", info = '非默认内核参数')
+        sysctl = i_conn.remote_exec("sysctl -p | sed 's/=//g'", info = '非默认内核参数')
         sysctl.insert(2, ['参数', '值'])
         for index, item in enumerate(sysctl):
             if len(item) > 2 and type(item) is types.ListType:
@@ -253,7 +271,7 @@ class OsInfo(object):
                 item.append(t)
                 sysctl[index] = item
 #                print item
-        startups = self.i_conn.remote_exec('chkconfig --list', info = '启动服务列表')
+        startups = i_conn.remote_exec('chkconfig --list', info = '启动服务列表')
         startups.insert(2, ['程序名', 'init 0', 'init 1', 'init 2', 'init 3', 'init 4', 'init 5', 'init 6'])
         #以此结构组织输出格式
         appendlist = [['基本信息'],
@@ -275,29 +293,91 @@ class OsInfo(object):
         for item in appendlist:
             outlist.append(item)
     def aix_func(self):
+        def parse_lsdev(command, info=None):
+            out = i_conn.remote_exec(command, info=info)
+            out.insert(2, ['名称', '状态', '插槽', '说明'])
+            for index, item in enumerate(out[3:]):
+                if not re.match('\d', item[2]):
+                    out[index+3].insert(2, '#')
+                out[index+3][3] = ' '.join(str(n) for n in item[3:])
+                out[index+3] = out[index+3][:4]
+            return out
+
+        def parse_lsattr(command, info):
+            attr = i_conn.remote_exec('lsattr -El sys0', info=info)
+            attr.insert(2, ['属性', '值', '描述', '可设置'])
+            for index, item in enumerate(attr[3:]):
+                #合并描述
+                attr[index+3][2] = ' '.join(str(n) for n in item[2:-1])
+                #把最后一列调到前面
+                attr[index+3][3] = item[-1]
+                #删掉多余的元素
+                attr[index+3] = attr[index+3][:4]
+            return attr
         #basic_func()
         i_conn = self.i_conn
         hostname = i_conn.exec_single('hostname')
         ipaddr = i_conn.exec_single("ifconfig -a | grep inet | head -n 1 | awk '{print $2}'")
         arch = i_conn.exec_single('uname -m')
         #manufacturer = self.i_conn.remote_exec('/usr/sbin/dmidecode | grep Manufacturer | head -n 1')[1][1].rstrip()
-        manufacturer = 'IBM'
+        #manufacturer = 'IBM'
         sn = i_conn.exec_single('uname -u')
-        self.basic_list = ['', '', ['主机名', 'IP 地址', '操作系统', 'CPU架构', '快照时间', '厂商', '序列号'],
-            [hostname, ipaddr,self.os_type, arch, __time__, manufacturer, sn]]
+        self.basic_list = ['', '', ['主机名', 'IP 地址', '操作系统', 'CPU架构', '快照时间', '序列号'],
+            [hostname, ipaddr,self.os_type, arch, __time__, sn]]
+        sys_ver = i_conn.exec_single('oslevel -s')
+        xlC_ver = i_conn.exec_single("/usr/vacpp/bin/xlC -qversion | tail -n 1 | awk '{print $2}'")
+        java_dir = i_conn.remote_exec('ls -d /usr/java*')
+        java_ver = ''
+        for n in java_dir[-1]:
+            java_ver += n + ', '
+        verlist = ['', '版本信息', ['系统版本', '编译器版本', '系统中的Java'],
+                   [sys_ver, xlC_ver, java_ver]]
+
+
+        syslist = parse_lsattr('lsattr -El sys0', info='核心信息')
+
+        #cpu内存
+        cpu_count = i_conn.exec_single('lsdev -Cc processor | wc -l')
+        cpuinfo = i_conn.remote_exec("lsattr -El proc0 | awk '{print $1, $2}'")
+        cpulist = ['', 'CPU信息', ['CPU个数', '频率', 'SMT Enabled', 'SMT Thread', 'Type'],
+                   [cpu_count, cpuinfo[1][1], cpuinfo[2][1], cpuinfo[3][1], cpuinfo[5][1]]]
+        memory = i_conn.exec_single("lsattr -El mem0 | grep goodsize | awk '{print $2}'")
+        mem_usage = i_conn.remote_exec('svmon -G | head -n 2', info='内存使用率(单位MB)')
+        mem_usage[2].insert(0, '#')
+        for index, value in enumerate(mem_usage[3][1:-1]):
+            mem_usage[3][index+1] = int(value)*4/1024
+        ps_usage = i_conn.remote_exec('lsps -s', x=1, info='交换空间')
+        ps_usage.insert(2, ['总大小', '剩余百分比'])
+        #mpstat = i_conn.remote_exec('mpstat 2 4 | grep -v -', x=3, info='CPU使用率')
+        cpu_usage = i_conn.remote_exec('sar -u 1 5', x=2, y=1, info='CPU使用率')
+        vmstat = i_conn.remote_exec('vmstat 1 5', x=3, info='总体情况')
+        #磁盘
+        hdisk = parse_lsdev('lsdev -Cc disk', info='磁盘信息')
+        iostat = i_conn.remote_exec('iostat', x=3, info='磁盘负载')
+        del iostat[2][1]
+        del iostat[2][2]
+        iostat[2].insert(1, '%tm_act')
+        dflist = i_conn.remote_exec('df -g', info='文件系统信息')
+        del dflist[2][1]
+        del dflist[2][2]
+        dflist[2].insert(1, 'GB Block')
+        del dflist[2][-1]
+        del dflist[2][-2]
+        dflist[2].insert(-1, 'Mounted on')
+        #网络信息
+
+        adapter = parse_lsdev('lsdev -Cc adapter', info='适配器信息（网卡，HBA卡等）')
         #以此结构组织输出格式
         appendlist = [['基本信息'],
-            self.basic_list,
-            ['版本信息'],
-            version,
+            self.basic_list, verlist, syslist,
             ['CPU/内存'],
-            cpu_list, mpstat, memlist,
+            cpulist, mem_usage, ps_usage, cpu_usage,vmstat,
             ['存储信息'],
-            pvlist, vglist, lvlist, dflist,
+            hdisk, dflist, iostat,
             ['网络信息'],
-            ipnet, router, net_pkg,
-            ['系统状态'],
-            iostat, vmstat, top, mem_top, sysctl, startups
+
+            ['拓展信息'],
+            adapter
         ]
 
         self.outlist = []
@@ -335,12 +415,14 @@ def gen_table(com_out_list):
     c_or_nc = True
     for line in table_data:
         if c_or_nc:
-            for item in line:
-                tro << tdnc(item)
+            map(lambda item: tro << tdnc(item), line)
+#            for item in line:
+#                tro << tdnc(item)
             c_or_nc = False
         else:
-            for item in line:
-                tro << tdc(item)
+            map(lambda item: tro << tdc(item), line)
+#            for item in line:
+#                tro << tdc(item)
             c_or_nc = True
         #TODO: tr标签闭合不正确
         tro << tr()
@@ -389,13 +471,11 @@ def gen_html(info):
     rpt_file.close()
     print u'报表生成完成：' + 'reports/ta_report_' + __now__ + '.html'
 def main():
-    connection = Connect()
+    connection = Connector()
     #connection.remote_init()
-    #connection.check_rpm('dmidecode')
-    #connection.check_rpm('sysstat')
     info = OsInfo(connection)
     info.choose()
-    #gen_html(info)
+    gen_html(info)
 if __name__ == '__main__':
     main()
 
